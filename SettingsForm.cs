@@ -77,7 +77,17 @@ namespace ZenStatesDebugTool
             }
         }
 
-        private void ExitApplication()
+        // Started from the logon task (--applyprofile): the profile is applied in the constructor,
+        // so Program cleans up and exits without ever showing the window.
+        public bool IsApplyProfile => isApplyProfile;
+
+        public void ShutdownWithoutWindow()
+        {
+            CleanupResources();
+            Dispose();
+        }
+
+        private void CleanupResources()
         {
             cpu?.Dispose();
 
@@ -90,6 +100,11 @@ namespace ZenStatesDebugTool
                 }
                 catch { }
             }
+        }
+
+        private void ExitApplication()
+        {
+            CleanupResources();
 
             if (Application.MessageLoop)
                 Application.Exit();

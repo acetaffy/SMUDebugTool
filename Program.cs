@@ -24,12 +24,21 @@ namespace ZenStatesDebugTool
             Application.ThreadException += ApplicationThreadException;
             try
             {
-                Form MainForm = new SettingsForm();
+                SettingsForm MainForm = new SettingsForm();
                 string appString = $"{Application.ProductName} {Application.ProductVersion.Substring(0, Application.ProductVersion.LastIndexOf('.'))}";
 #if DEBUG
                 appString += " (debug)";
 #endif
                 MainForm.Text = appString;
+
+                // Logon task starts the tool with --applyprofile. The profile was already applied
+                // in the constructor, so exit without ever showing the window.
+                if (MainForm.IsApplyProfile)
+                {
+                    MainForm.ShutdownWithoutWindow();
+                    return;
+                }
+
                 Application.Run(MainForm);
             }
             catch (ApplicationException ex)
