@@ -225,7 +225,8 @@ namespace ZenStatesDebugTool
 
         private void ApplyCOProfile ()
         {
-            List<Tuple<int, int>> margins = LoadCOProfile();
+            List<Tuple<int, int>> margins = LoadCOProfile(out decimal? savedFmax);
+
             if (margins.Count > 0 && IsCurveOptimizerSupported)
             {
                 foreach (var margin in margins)
@@ -237,6 +238,14 @@ namespace ZenStatesDebugTool
                         cpu.SetPsmMarginSingleCore(EncodeCoreMarginBitmask(index), Convert.ToInt32(value));
                     }
                 }
+            }
+
+            if (savedFmax > 0)
+            {
+                if (cpu.SetFMax((uint)savedFmax.Value))
+                    numericUpDownFmax.Value = cpu.GetFMax();
+                else
+                    Console.WriteLine($"Failed to apply FMax ({savedFmax.Value} MHz) from profile.");
             }
         }
 
@@ -2330,8 +2339,9 @@ namespace ZenStatesDebugTool
             }
         }
 
-        private List<Tuple<int, int>> LoadCOProfile()
+        private List<Tuple<int, int>> LoadCOProfile(out decimal? savedFmax)
         {
+            savedFmax = null;
             List<Tuple<int, int>> margins = new List<Tuple<int, int>>();
             try
             {
@@ -2358,11 +2368,7 @@ namespace ZenStatesDebugTool
                         {
                             var fmaxStr = line.Substring(5);
                             if (decimal.TryParse(fmaxStr, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal fmaxVal))
-                                fmaxVal = Math.Max(numericUpDownFmax.Minimum, Math.Min(numericUpDownFmax.Maximum, fmaxVal));
-                            else
-                                fmaxVal = numericUpDownFmax.Value;
-                            // store temporarily in Tag for retrieval in BtnLoadCOProfile_Click
-                            numericUpDownFmax.Tag = fmaxVal;
+                                savedFmax = Math.Max(numericUpDownFmax.Minimum, Math.Min(numericUpDownFmax.Maximum, fmaxVal));
                         }
                     }
                 }
@@ -2381,8 +2387,7 @@ namespace ZenStatesDebugTool
 
         private void BtnLoadCOProfile_Click(object sender, EventArgs e)
         {
-            numericUpDownFmax.Tag = null;
-            List<Tuple<int, int>> margins = LoadCOProfile();
+            List<Tuple<int, int>> margins = LoadCOProfile(out decimal? savedFmax);
 
             if (margins.Count > 0 && IsCurveOptimizerSupported)
             {
@@ -2395,8 +2400,8 @@ namespace ZenStatesDebugTool
                     }
                 }
 
-                if (numericUpDownFmax.Tag is decimal savedFmax)
-                    numericUpDownFmax.Value = savedFmax;
+                if (savedFmax.HasValue)
+                    numericUpDownFmax.Value = savedFmax.Value;
 
                 textBoxResult.Text = $"Saved CO profile loaded from {defaultsPath}" + Environment.NewLine + textBoxResult.Text;
             }
