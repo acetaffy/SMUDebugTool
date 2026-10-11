@@ -1,0 +1,85 @@
+name: Build
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (with ZenStates-Core submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore packages.config dependencies
+        run: nuget restore packages.config -PackagesDirectory packages -NonInteractive
+
+      - name: Restore ZenStates-Core (SDK-style project)
+        run: msbuild ZenStates-Core\ZenStates-Core.csproj -t:Restore -nologo
+
+      # Prebuilt\inpoutx64.dll is referenced with CopyToOutputDirectory but is not tracked in
+      # this repository (and is not shipped in the official release archives either). Without
+      # the file, MSBuild fails the copy step with MSB3030, so drop the stale item when absent.
+      - name: Drop stale Prebuilt\inpoutx64.dll copy reference
+        shell: pwsh
+        run: |
+          @'
+          <Project>
+            <!-- Added by CI only: Prebuilt\inpoutx64.dll is not tracked in the repository.
+                 Remove the copy-to-output reference when the file is absent so the build
+                 does not fail with MSB3030. -->
+            <Target Name="_CI_RemoveStalePrebuiltItems" BeforeTargets="AssignTargetPaths"
+                    Condition="!Exists('$(MSBuildProjectDirectory)\Prebuilt\inpoutx64.dll')">
+              <ItemGroup>
+                <None Remove="Prebuilt\inpoutx64.dll" />
+              </ItemGroup>
+            </Target>
+          </Project>
+          '@ | Set-Content -Encoding UTF8 Directory.Build.targets
+
+      # GitHub runners do not ship the .NET Framework 4.5 / 2.0 targeting packs. Use Microsoft's
+      # reference-assembly NuGet packages and merge them into a single TargetFrameworkRootPath
+      # tree: v4.5 for ZenStatesDebugTool, v2.0 for ZenStates-Core's net20 target.
+      - name: Prepare .NET Framework reference assemblies (4.5 / 2.0)
+        shell: pwsh
+        run: |
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net45 -Version 1.0.3 -OutputDirectory ref-pkgs -Verbosity quiet -NonInteractive
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net20 -Version 1.0.3 -OutputDirectory ref-pkgs -Verbosity quiet -NonInteractive
+          New-Item -ItemType Directory -Force ref-asm\.NETFramework | Out-Null
+          Get-ChildItem ref-pkgs -Recurse -Directory -Filter '.NETFramework' | ForEach-Object {
+            Get-ChildItem $_.FullName -Directory | ForEach-Object {
+              Copy-Item $_.FullName (Join-Path 'ref-asm\.NETFramework' $_.Name) -Recurse -Force
+            }
+          }
+          Get-ChildItem ref-asm\.NETFramework -Directory | ForEach-Object { Write-Host "reference assemblies: $($_.Name)" }
+
+      # BypassFrameworkInstallChecks is required for the net20 target: without it MSBuild
+      # demands a .NET 3.5 SP1 sentinel assembly that is not present on the runners.
+      - name: Build (Release)
+        run: msbuild ZenStatesDebugTool.sln -m -nologo -p:Configuration=Release -p:BypassFrameworkInstallChecks=true -p:TargetFrameworkRootPath="${{ github.workspace }}/ref-asm"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SMUDebugTool
+          path: bin/Release/
+          if-no-files-found: error
